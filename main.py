@@ -173,7 +173,7 @@ def main(args):
     model.to(device)
     model_without_ddp = model
     
-    dataset_val_org = build_dataset(image_set='test', args=args)
+    dataset_val_org = build_dataset(image_set='val', args=args)
     
     if args.approx_benchmark_only or args.benchmark_only:
         assert not args.distributed and args.benchmark
