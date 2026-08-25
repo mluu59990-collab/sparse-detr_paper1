@@ -170,6 +170,9 @@ def build(image_set, args):
         split_root = root / image_set
         img_candidates = [
             split_root / "images",
+            split_root / "test" / "images",
+            split_root / "valid" / "images",
+            split_root / "val" / "images",
             split_root,
         ]
         ann_candidates = [
@@ -180,13 +183,31 @@ def build(image_set, args):
             split_root / "_annotations.coco.json",
             split_root / "annotations.json",
             split_root / f"{image_set}.json",
+            split_root / "test" / "instances_test.json",
+            split_root / "test" / "_annotations.coco.json",
+            split_root / "test" / "annotations.json",
+            split_root / "valid" / "instances_valid.json",
+            split_root / "valid" / "_annotations.coco.json",
+            split_root / "valid" / "annotations.json",
+            split_root / "val" / "instances_val.json",
+            split_root / "val" / "_annotations.coco.json",
+            split_root / "val" / "annotations.json",
             root / "annotations" / f"instances_{image_set}.json",
         ]
         img_folder = next((p for p in img_candidates if p.exists()), img_candidates[0])
         ann_file = next((p for p in ann_candidates if p.exists()), ann_candidates[0])
+        if not ann_file.exists() and split_root.exists():
+            json_files = sorted(split_root.rglob("*.json"))
+            if len(json_files) == 1:
+                ann_file = json_files[0]
 
     assert img_folder.exists(), f'provided COCO image folder {img_folder} does not exist'
-    assert ann_file.exists(), f'provided COCO annotation file {ann_file} does not exist'
+    if not ann_file.exists():
+        found_jsons = sorted(str(p) for p in (root / image_set).rglob("*.json")) if (root / image_set).exists() else []
+        raise AssertionError(
+            f'provided COCO annotation file {ann_file} does not exist. '
+            f'JSON files found under {root / image_set}: {found_jsons}'
+        )
     dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(transform_set), return_masks=args.masks,
                             cache_mode=args.cache_mode, local_rank=get_local_rank(), local_size=get_local_size())
     return dataset
