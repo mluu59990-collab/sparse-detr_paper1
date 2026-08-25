@@ -142,6 +142,8 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--eval', action='store_true')
+    parser.add_argument('--eval_set', default='val', choices=['val', 'test'],
+                        help='dataset split to use with --eval')
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
     
@@ -172,8 +174,11 @@ def main(args):
     model, criterion, postprocessors = build_model(args)
     model.to(device)
     model_without_ddp = model
-    
-    dataset_val_org = build_dataset(image_set='val', args=args)
+
+    eval_image_set = args.eval_set if args.eval else 'val'
+    if args.eval:
+        print(f"Evaluation split: {eval_image_set}")
+    dataset_val_org = build_dataset(image_set=eval_image_set, args=args)
     
     if args.approx_benchmark_only or args.benchmark_only:
         assert not args.distributed and args.benchmark
@@ -199,26 +204,36 @@ def main(args):
         # wait for benchmark in the main process
         torch.distributed.barrier()
         
-    dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = dataset_val_org
 
-    if args.distributed:
-        if args.cache_mode:
-            sampler_train = samplers.NodeDistributedSampler(dataset_train)
-            sampler_val = samplers.NodeDistributedSampler(dataset_val, shuffle=False)
+    if args.eval:
+        if args.distributed:
+            if args.cache_mode:
+                sampler_val = samplers.NodeDistributedSampler(dataset_val, shuffle=False)
+            else:
+                sampler_val = samplers.DistributedSampler(dataset_val, shuffle=False)
         else:
-            sampler_train = samplers.DistributedSampler(dataset_train)
-            sampler_val = samplers.DistributedSampler(dataset_val, shuffle=False)
+            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
     else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+        dataset_train = build_dataset(image_set='train', args=args)
 
-    batch_sampler_train = torch.utils.data.BatchSampler(
-        sampler_train, args.batch_size, drop_last=True)
+        if args.distributed:
+            if args.cache_mode:
+                sampler_train = samplers.NodeDistributedSampler(dataset_train)
+                sampler_val = samplers.NodeDistributedSampler(dataset_val, shuffle=False)
+            else:
+                sampler_train = samplers.DistributedSampler(dataset_train)
+                sampler_val = samplers.DistributedSampler(dataset_val, shuffle=False)
+        else:
+            sampler_train = torch.utils.data.RandomSampler(dataset_train)
+            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
-    data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                   collate_fn=utils.collate_fn, num_workers=args.num_workers,
-                                   pin_memory=True)
+        batch_sampler_train = torch.utils.data.BatchSampler(
+            sampler_train, args.batch_size, drop_last=True)
+
+        data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
+                                       collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                       pin_memory=True)
     data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
                                  drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
                                  pin_memory=True)
@@ -269,7 +284,7 @@ def main(args):
 
     if args.dataset_file == "coco_panoptic":
         # We also evaluate AP during panoptic training, on original coco DS
-        coco_val = datasets.coco.build("val", args)
+        coco_val = datasets.coco.build(eval_image_set, args)
         base_ds = get_coco_api_from_dataset(coco_val)
     else:
         base_ds = get_coco_api_from_dataset(dataset_val)
