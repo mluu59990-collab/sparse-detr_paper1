@@ -142,7 +142,7 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--eval', action='store_true')
-    parser.add_argument('--eval_set', default='val', choices=['val', 'test'],
+    parser.add_argument('--eval_set', default='val',
                         help='dataset split to use with --eval')
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
@@ -435,8 +435,18 @@ def print_final_result_on_master(model, dataset_val, args, test_stats, start_tim
 
     # make result table
     now = datetime.datetime.now().strftime("%h%d %H:%M")
-    tab_keys =  ["Time", "output_dir", "epochs", "bsz", "#GPUs"]
-    tab_vals =  [now, Path(args.output_dir), args.epochs, int(args.batch_size * num_gpus), num_gpus]
+    gpu_name = torch.cuda.get_device_name(args.gpu if args.distributed else 0) if torch.cuda.is_available() else "CPU"
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    tab_keys =  ["Time", "output_dir", "epochs", "bsz", "#GPUs", "GPU", "#Params(M)"]
+    tab_vals =  [
+        now,
+        Path(args.output_dir),
+        args.epochs,
+        int(args.batch_size * num_gpus),
+        num_gpus,
+        gpu_name,
+        n_params / 10 ** 6,
+    ]
     tab_keys += ["AP", "AP50", "AP75", "APs", "APm", "APl"]
     tab_vals += [v * 100 for v in test_stats['coco_eval_bbox'][:6]]
 

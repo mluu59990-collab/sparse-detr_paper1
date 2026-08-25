@@ -84,10 +84,11 @@ def compute_gflops(model, dataset, approximated=True):
         print("Average image size of first 100 image of COCO val2017 : "
               f"{np.array(imsize_list).mean(0)}")
         
-    print(f"GFLOPs : {np.array(gflops_list).mean()}")
+    gflops_mean = float(np.array(gflops_list).mean())
+    print(f"GFLOPs : {gflops_mean}")
     model.train()
     python_ops_mode_for_deform_attn(model, False)
-    return gflops
+    return gflops_mean
 
 
 def flop_count_without_warnings(

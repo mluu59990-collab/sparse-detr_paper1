@@ -157,15 +157,36 @@ def make_coco_transforms(image_set):
 def build(image_set, args):
     root = Path(args.coco_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
-    mode = 'instances'
-    transform_set = 'val' if image_set == 'valid' else image_set
+    transform_set = 'train' if image_set == 'train' else 'val'
     PATHS = {
         "train": (root / "train" / "images", root / "train" / "instances_train.json"),
         "val":   (root / "valid" / "images", root / "valid" / "instances_valid.json"),
         "test":  (root / "test"  / "images", root / "test"  / "instances_test.json"),
     }
 
-    img_folder, ann_file = PATHS[image_set]
+    if image_set in PATHS:
+        img_folder, ann_file = PATHS[image_set]
+    else:
+        split_root = root / image_set
+        img_candidates = [
+            split_root / "images",
+            split_root,
+        ]
+        ann_candidates = [
+            split_root / f"instances_{image_set}.json",
+            split_root / "instances_test.json",
+            split_root / "instances_valid.json",
+            split_root / "instances_val.json",
+            split_root / "_annotations.coco.json",
+            split_root / "annotations.json",
+            split_root / f"{image_set}.json",
+            root / "annotations" / f"instances_{image_set}.json",
+        ]
+        img_folder = next((p for p in img_candidates if p.exists()), img_candidates[0])
+        ann_file = next((p for p in ann_candidates if p.exists()), ann_candidates[0])
+
+    assert img_folder.exists(), f'provided COCO image folder {img_folder} does not exist'
+    assert ann_file.exists(), f'provided COCO annotation file {ann_file} does not exist'
     dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(transform_set), return_masks=args.masks,
                             cache_mode=args.cache_mode, local_rank=get_local_rank(), local_size=get_local_size())
     return dataset
