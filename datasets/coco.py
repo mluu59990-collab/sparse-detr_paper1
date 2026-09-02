@@ -269,12 +269,29 @@ def _image_exists(img_folder, image_name):
     return (img_folder / image_name).exists()
 
 
+def _find_annotation_files(root, image_set):
+    expected_names = {path.name for path in _annotation_candidates(root, image_set)}
+    matches = []
+    for path in root.rglob("*.json"):
+        name = path.name
+        if name in expected_names or image_set.lower() in name.lower():
+            matches.append(path)
+    return sorted(matches)
+
+
 def _choose_annotation_file(root, image_set, explicit_ann_file):
     if explicit_ann_file is not None:
         return explicit_ann_file, [explicit_ann_file]
 
     candidates = _annotation_candidates(root, image_set)
     ann_file = next((p for p in candidates if p.exists()), candidates[0])
+    if not ann_file.exists():
+        discovered = _find_annotation_files(root, image_set)
+        candidates = _dedupe_paths(candidates + discovered)
+        if len(discovered) == 1:
+            ann_file = discovered[0]
+        elif discovered:
+            ann_file = discovered[0]
     return ann_file, candidates
 
 
@@ -282,7 +299,12 @@ def _choose_image_folder(root, image_set, ann_file, explicit_img_folder):
     if explicit_img_folder is not None:
         return explicit_img_folder, [explicit_img_folder], _load_image_names(ann_file)
 
-    candidates = _image_folder_candidates(root, image_set)
+    ann_parent = ann_file.parent
+    candidates = _dedupe_paths([
+        ann_parent / "images",
+        ann_parent / "JPEGImages",
+        ann_parent,
+    ] + _image_folder_candidates(root, image_set))
     existing = [p for p in candidates if p.exists()]
     image_names = _load_image_names(ann_file)
 
