@@ -12,6 +12,7 @@ COCO dataset which returns image_id for evaluation.
 
 Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
 """
+import json
 from pathlib import Path
 
 import torch
@@ -154,60 +155,184 @@ def make_coco_transforms(image_set):
     raise ValueError(f'unknown {image_set}')
 
 
+def _dedupe_paths(paths):
+    seen = set()
+    deduped = []
+    for path in paths:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(path)
+    return deduped
+
+
+def _resolve_path(root, value):
+    if not value:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else root / path
+
+
+def _split_aliases(image_set):
+    aliases = {
+        "train": ["train", "train2017"],
+        "val": ["valid", "val", "val2017"],
+        "test": ["test", "test2017"],
+    }
+    return aliases.get(image_set, [image_set])
+
+
+def _image_folder_candidates(root, image_set):
+    candidates = []
+    for split in _split_aliases(image_set):
+        candidates.extend([
+            root / split / "images",
+            root / split,
+            root / "images" / split,
+        ])
+
+    split_root = root / image_set
+    candidates.extend([
+        split_root / "test" / "images",
+        split_root / "valid" / "images",
+        split_root / "val" / "images",
+        split_root / "train" / "images",
+        split_root / "JPEGImages",
+        root / "images",
+        root / "JPEGImages",
+        root,
+    ])
+    return _dedupe_paths(candidates)
+
+
+def _annotation_candidates(root, image_set):
+    candidates = []
+    names = [
+        f"instances_{image_set}.json",
+        f"{image_set}.json",
+        "_annotations.coco.json",
+        "annotations.json",
+    ]
+
+    for split in _split_aliases(image_set):
+        split_names = [
+            f"instances_{split}.json",
+            f"instances_{image_set}.json",
+            f"{split}.json",
+            f"{image_set}.json",
+            "_annotations.coco.json",
+            "annotations.json",
+        ]
+        for name in split_names:
+            candidates.extend([
+                root / split / name,
+                root / "annotations" / name,
+            ])
+
+    split_root = root / image_set
+    for name in names:
+        candidates.extend([
+            split_root / name,
+            root / "annotations" / name,
+            root / name,
+        ])
+
+    for nested in ["test", "valid", "val", "train"]:
+        for name in names:
+            candidates.append(split_root / nested / name)
+
+    return _dedupe_paths(candidates)
+
+
+def _load_image_names(ann_file, limit=50):
+    if not ann_file.exists():
+        return []
+    try:
+        with ann_file.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    names = []
+    for image in data.get("images", []):
+        name = image.get("file_name")
+        if name:
+            names.append(Path(name))
+        if len(names) >= limit:
+            break
+    return names
+
+
+def _image_exists(img_folder, image_name):
+    if image_name.is_absolute():
+        return image_name.exists()
+    return (img_folder / image_name).exists()
+
+
+def _choose_annotation_file(root, image_set, explicit_ann_file):
+    if explicit_ann_file is not None:
+        return explicit_ann_file, [explicit_ann_file]
+
+    candidates = _annotation_candidates(root, image_set)
+    ann_file = next((p for p in candidates if p.exists()), candidates[0])
+    return ann_file, candidates
+
+
+def _choose_image_folder(root, image_set, ann_file, explicit_img_folder):
+    if explicit_img_folder is not None:
+        return explicit_img_folder, [explicit_img_folder], _load_image_names(ann_file)
+
+    candidates = _image_folder_candidates(root, image_set)
+    existing = [p for p in candidates if p.exists()]
+    image_names = _load_image_names(ann_file)
+
+    if existing and image_names:
+        scored = [(sum(_image_exists(folder, name) for name in image_names), folder) for folder in existing]
+        best_count, best_folder = max(scored, key=lambda item: item[0])
+        if best_count > 0:
+            return best_folder, candidates, image_names
+
+    img_folder = existing[0] if existing else candidates[0]
+    return img_folder, candidates, image_names
+
+
+def _format_paths(paths):
+    return ", ".join(str(path) for path in paths)
+
+
 def build(image_set, args):
     root = Path(args.coco_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
     transform_set = 'train' if image_set == 'train' else 'val'
-    PATHS = {
-        "train": (root / "train" / "images", root / "train" / "instances_train.json"),
-        "val":   (root / "valid" / "images", root / "valid" / "instances_valid.json"),
-        "test":  (root / "test"  / "images", root / "test"  / "instances_test.json"),
-    }
 
-    if image_set in PATHS:
-        img_folder, ann_file = PATHS[image_set]
-    else:
-        split_root = root / image_set
-        img_candidates = [
-            split_root / "images",
-            split_root / "test" / "images",
-            split_root / "valid" / "images",
-            split_root / "val" / "images",
-            split_root,
-        ]
-        ann_candidates = [
-            split_root / f"instances_{image_set}.json",
-            split_root / "instances_test.json",
-            split_root / "instances_valid.json",
-            split_root / "instances_val.json",
-            split_root / "_annotations.coco.json",
-            split_root / "annotations.json",
-            split_root / f"{image_set}.json",
-            split_root / "test" / "instances_test.json",
-            split_root / "test" / "_annotations.coco.json",
-            split_root / "test" / "annotations.json",
-            split_root / "valid" / "instances_valid.json",
-            split_root / "valid" / "_annotations.coco.json",
-            split_root / "valid" / "annotations.json",
-            split_root / "val" / "instances_val.json",
-            split_root / "val" / "_annotations.coco.json",
-            split_root / "val" / "annotations.json",
-            root / "annotations" / f"instances_{image_set}.json",
-        ]
-        img_folder = next((p for p in img_candidates if p.exists()), img_candidates[0])
-        ann_file = next((p for p in ann_candidates if p.exists()), ann_candidates[0])
-        if not ann_file.exists() and split_root.exists():
-            json_files = sorted(split_root.rglob("*.json"))
-            if len(json_files) == 1:
-                ann_file = json_files[0]
+    explicit_img_folder = _resolve_path(root, getattr(args, "coco_img_folder", ""))
+    explicit_ann_file = _resolve_path(root, getattr(args, "coco_ann_file", ""))
 
-    assert img_folder.exists(), f'provided COCO image folder {img_folder} does not exist'
+    ann_file, ann_candidates = _choose_annotation_file(root, image_set, explicit_ann_file)
     if not ann_file.exists():
-        found_jsons = sorted(str(p) for p in (root / image_set).rglob("*.json")) if (root / image_set).exists() else []
+        found_jsons = sorted(str(p) for p in (root / "annotations").glob("*.json")) if (root / "annotations").exists() else []
+        found_jsons += sorted(str(p) for p in (root / image_set).rglob("*.json")) if (root / image_set).exists() else []
+        found_jsons += sorted(str(p) for p in root.glob("*.json"))
         raise AssertionError(
             f'provided COCO annotation file {ann_file} does not exist. '
-            f'JSON files found under {root / image_set}: {found_jsons}'
+            f'Checked: {_format_paths(ann_candidates)}. '
+            f'JSON files found: {found_jsons}'
         )
+
+    img_folder, img_candidates, image_names = _choose_image_folder(root, image_set, ann_file, explicit_img_folder)
+    assert img_folder.exists(), (
+        f'provided COCO image folder {img_folder} does not exist. '
+        f'Checked: {_format_paths(img_candidates)}'
+    )
+
+    if image_names and not any(_image_exists(img_folder, name) for name in image_names):
+        examples = [str(name) for name in image_names[:5]]
+        raise AssertionError(
+            f'COCO image folder {img_folder} exists, but none of the sampled images from {ann_file} were found there. '
+            f'Examples from annotation file: {examples}. '
+            f'Pass --coco_img_folder with the directory that those file_name paths are relative to.'
+        )
+
     dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(transform_set), return_masks=args.masks,
                             cache_mode=args.cache_mode, local_rank=get_local_rank(), local_size=get_local_size())
     return dataset

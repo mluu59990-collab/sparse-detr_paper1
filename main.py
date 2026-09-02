@@ -130,6 +130,10 @@ def get_args_parser():
     # * dataset parameters
     parser.add_argument('--dataset_file', default='coco')
     parser.add_argument('--coco_path', default='./data/coco', type=str)
+    parser.add_argument('--coco_img_folder', default='', type=str,
+                        help='optional image folder for a custom COCO split; relative paths are resolved from coco_path')
+    parser.add_argument('--coco_ann_file', default='', type=str,
+                        help='optional annotation JSON for a custom COCO split; relative paths are resolved from coco_path')
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
 
